@@ -56,10 +56,6 @@ sales_model = joblib.load("sales_model.pkl")
 product_model_paths = joblib.load("product_model_paths.pkl")
 product_models = {name: joblib.load(path) for name, path in product_model_paths.items() if os.path.exists(path)}
 
-# ＝＝＝ デバッグ出力 ＝＝＝
-st.write("モデルパス一覧:", product_model_paths)
-st.write("存在チェック:", {k: os.path.exists(v) for k, v in product_model_paths.items()})
-
 df_menu = pd.read_csv("商品別売上_統合_統合済v1.13.csv")
 constant_items = df_menu[df_menu["恒常メニュー"] == 1]["商品名"].unique().tolist()
 seasonal_items_all = df_menu[df_menu["シーズンメニュー"] == 1]["商品名"].unique().tolist()
