@@ -230,7 +230,7 @@ if st.button("予測を実行"):
 
         # 売上予測
         raw_sales = sales_model.predict(feat.drop(columns=["売上", "繁忙期フラグ"]))[0]
-        multiplier = 1.8 if feat.at[0, "繁忙期フラグ"] == 1 else 1.0
+        multiplier = 2 if feat.at[0, "繁忙期フラグ"] == 1 else 1.0
         pred_sales = int(raw_sales * multiplier)
 
         # 商品数量予測
