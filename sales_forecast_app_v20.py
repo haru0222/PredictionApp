@@ -10,14 +10,146 @@ import os
 import numpy as np
 import jpholiday
 
+# --- 日本語サイトのイベント プレビュー（ビッグサイト/ダイバーシティ/お台場） ---
+import re
+from functools import lru_cache
+from bs4 import BeautifulSoup
+
+# 収集対象URL（日本語のみ）
+EVENT_SOURCES_JP = [
+    # 東京ビッグサイト（イベント情報）
+    ("https://www.bigsight.jp/visitor/event/", "東京ビッグサイト"),
+    # ダイバーシティ東京プラザ（イベント・キャンペーン）
+    ("https://mitsui-shopping-park.com/divercity-tokyo/event/", "ダイバーシティ東京プラザ"),
+    # お台場 公式ポータル（イベント一覧・カレンダー）
+    ("https://www.tokyo-odaiba.net/event_index/", "お台場（公式一覧）"),
+    ("https://www.tokyo-odaiba.net/event_calender/", "お台場（公式カレンダー）"),
+]
+
+# 日付表記のゆれに対応した正規表現（日本語寄り）
+# 例：2025/10/1～2025/10/3, 2025年10月1日〜3日, 10/01(水)〜10/03(金) など
+RANGE_PATTERNS = [
+    r"(?P<y1>\d{4})[./年\-](?P<m1>\d{1,2})[./月\-](?P<d1>\d{1,2})[日]?\s*[～\-–~〜至からto～～─―]+\s*(?P<y2>\d{4})[./年\-](?P<m2>\d{1,2})[./月\-](?P<d2>\d{1,2})[日]?",
+    r"(?P<m1>\d{1,2})[./月\-](?P<d1>\d{1,2})[日]?\s*[～\-–~〜]+\s*(?P<m2>\d{1,2})[./月\-](?P<d2>\d{1,2})[日]?(\s*\((?P<w2>.)\))?",
+]
+SINGLE_PATTERNS = [
+    r"(?P<y>\d{4})[./年\-](?P<m>\d{1,2})[./月\-](?P<d>\d{1,2})[日]?",
+    r"(?P<m>\d{1,2})[./月\-](?P<d>\d{1,2})[日]?(?:\((?P<w>.)\))?",
+]
+
+def _to_date(y, m, d):
+    return datetime.date(int(y), int(m), int(d))
+
+def _normalize_date_str(s: str) -> str:
+    # 全角や和文区切りをざっくりASCII寄せ
+    return (
+        s.replace("年", "/").replace("月", "/").replace("日", "")
+         .replace("．", ".").replace("ー", "-").replace("―", "-")
+         .replace("～", "~").replace("〜", "~").replace("：", ":")
+    )
+
+def _extract_date_ranges_jp(text: str, base_year: int):
+    """テキストから (start, end) の日付レンジ配列を抽出（単日は start=end）"""
+    t = _normalize_date_str(text)
+
+    ranges = []
+
+    # 範囲表記
+    for pat in RANGE_PATTERNS:
+        for m in re.finditer(pat, t):
+            gd = m.groupdict()
+            try:
+                if "y1" in gd and gd.get("y1") and gd.get("y2"):
+                    y1, m1, d1 = gd["y1"], gd["m1"], gd["d1"]
+                    y2, m2, d2 = gd["y2"], gd["m2"], gd["d2"]
+                else:
+                    # 年省略 → 同一年として扱う（年跨ぎは詳細ページで拾うのが確実）
+                    y1 = y2 = str(base_year)
+                    m1, d1 = gd["m1"], gd["d1"]
+                    m2, d2 = gd["m2"], gd["d2"]
+
+                a = _to_date(y1, m1, d1)
+                b = _to_date(y2, m2, d2)
+                if a <= b:
+                    ranges.append((a, b))
+            except Exception:
+                pass
+
+    # 単日表記
+    singles = []
+    for pat in SINGLE_PATTERNS:
+        for m in re.finditer(pat, t):
+            gd = m.groupdict()
+            try:
+                if gd.get("y"):
+                    d = _to_date(gd["y"], gd["m"], gd["d"])
+                else:
+                    d = _to_date(base_year, gd["m"], gd["d"])
+                singles.append(d)
+            except Exception:
+                pass
+
+    # 既存レンジに含まれていなければ単日→レンジ化
+    for d in singles:
+        if not any(a <= d <= b for a, b in ranges):
+            ranges.append((d, d))
+
+    return ranges
+
+@lru_cache(maxsize=64)
+def _fetch_html(url: str) -> str:
+    try:
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if r.ok:
+            return r.text
+    except Exception:
+        pass
+    return ""
+
+def _scan_event_pages_jp(target_date: datetime.date):
+    """上記日本語ページを走査し、target_date を含むイベント候補を返す"""
+    hits = []
+    for url, site in EVENT_SOURCES_JP:
+        html = _fetch_html(url)
+        if not html:
+            continue
+        soup = BeautifulSoup(html, "html.parser")
+
+        # 大まかに見出し＋本文の塊を走査（サイト構造に依らず拾える汎用パターン）
+        for node in soup.find_all(["h1", "h2", "h3", "h4", "p", "li", "div", "a", "span"]):
+            text = " ".join(node.get_text(" ", strip=True).split())
+            if not text or len(text) < 6:
+                continue
+            ranges = _extract_date_ranges_jp(text, base_year=target_date.year)
+            for a, b in ranges:
+                if a <= target_date <= b:
+                    title = text
+                    # タイトル（抜粋）が長すぎる場合は適度に丸める
+                    if len(title) > 120:
+                        title = title[:117] + "..."
+                    hits.append({
+                        "会場": site,
+                        "開始日": a.isoformat(),
+                        "終了日": b.isoformat(),
+                        "イベント（抜粋）": title,
+                        "リンク": url,
+                    })
+                    break  # そのノードからは1件だけ拾う
+
+    # 重複除去（会場×期間×抜粋でユニーク化）
+    uniq, seen = [], set()
+    for h in hits:
+        key = (h["会場"], h["開始日"], h["終了日"], h["イベント（抜粋）"])
+        if key not in seen:
+            seen.add(key)
+            uniq.append(h)
+    return uniq
+
 # 追加インポート（世界の祝日）
 try:
     import holidays as pyholidays
 except Exception:
     pyholidays = None
-
-from functools import lru_cache
-import datetime as dt
 
 # 国コード→表示名（必要な国はここに足せます）
 COUNTRIES = {
@@ -36,9 +168,8 @@ SUBDIV = {
 
 # ========= 日本の長期休み・繁忙期ユーティリティ =========
 def get_all_long_holidays(year):
-    import datetime as dt
-    obon_days = [dt.date(year, 8, d) for d in range(13, 17)]
-    all_days = [dt.date(year, 1, 1) + dt.timedelta(days=i) for i in range(370)]
+    obon_days = [datetime.date(year, 8, d) for d in range(13, 17)]
+    all_days = [datetime.date(year, 1, 1) + datetime.timedelta(days=i) for i in range(370)]
 
     def is_holiday_like(d):
         return jpholiday.is_holiday(d) or d.weekday() >= 5 or d in obon_days
@@ -56,9 +187,9 @@ def get_all_long_holidays(year):
         long_holidays.update(current_block)
 
     # 学校の長期休み
-    summer = [dt.date(year, 7, d) for d in range(20, 32)] + [dt.date(year, 8, d) for d in range(1, 32)]
-    winter = [dt.date(year, 12, d) for d in range(25, 32)] + [dt.date(year + 1, 1, d) for d in range(1, 8)]
-    spring = [dt.date(year, 3, d) for d in range(20, 32)] + [dt.date(year, 4, d) for d in range(1, 6)]
+    summer = [datetime.date(year, 7, d) for d in range(20, 32)] + [datetime.date(year, 8, d) for d in range(1, 32)]
+    winter = [datetime.date(year, 12, d) for d in range(25, 32)] + [datetime.date(year + 1, 1, d) for d in range(1, 8)]
+    spring = [datetime.date(year, 3, d) for d in range(20, 32)] + [datetime.date(year, 4, d) for d in range(1, 6)]
     long_holidays.update(summer + winter + spring)
     return long_holidays
 
@@ -123,8 +254,8 @@ def is_long_holiday_in_country(date, country_code):
     holiday_set = set(hol.keys()) if hol else set()
 
     # 年をまたぐ可能性あり：当年+前後を含めて走査
-    start = dt.date(y, 1, 1) - dt.timedelta(days=7)
-    days = [start + dt.timedelta(days=i) for i in range(370 + 14)]
+    start = datetime.date(y, 1, 1) - datetime.timedelta(days=7)
+    days = [start + datetime.timedelta(days=i) for i in range(370 + 14)]
 
     def is_holiday_like(d):
         return (d in holiday_set) or (d.weekday() >= 5)
@@ -263,15 +394,8 @@ if selected_dates:
             except Exception:
                 continue
 
-        if not hits and not long_hits:
-            status = "該当なし"
-        else:
-            status = " / ".join(hits + long_hits)
-
-        rows.append({
-            "日付": d.strftime("%Y-%m-%d"),
-            "該当国の祝日・長期連休": status
-        })
+        status = " / ".join(hits + long_hits) if (hits or long_hits) else "該当なし"
+        rows.append({"日付": d.strftime("%Y-%m-%d"), "該当国の祝日・長期連休": status})
 
     st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
@@ -299,6 +423,46 @@ if selected_dates:
             st.dataframe(pd.DataFrame(detail_rows), use_container_width=True)
         else:
             st.info("該当なし")
+
+# ---- ビッグサイト/ダイバーシティ/お台場 イベント候補（日本語のみ） ----
+if selected_dates:
+    st.write("### 🎪 ビッグサイト／ダイバーシティ東京プラザ／お台場：イベント開催プレビュー（日本語）")
+
+    event_rows = []
+    for d in selected_dates:
+        found = _scan_event_pages_jp(d)
+        if found:
+            for ev in found:
+                event_rows.append({
+                    "日付": d.strftime("%Y-%m-%d"),
+                    "会場": ev["会場"],
+                    "開始日": ev["開始日"],
+                    "終了日": ev["終了日"],
+                    "イベント（抜粋）": ev["イベント（抜粋）"],
+                    "リンク": ev["リンク"],
+                })
+        else:
+            event_rows.append({
+                "日付": d.strftime("%Y-%m-%d"),
+                "会場": "-",
+                "開始日": "",
+                "終了日": "",
+                "イベント（抜粋）": "該当なし",
+                "リンク": "",
+            })
+
+    df_events = pd.DataFrame(event_rows)
+    try:
+        st.dataframe(
+            df_events,
+            use_container_width=True,
+            column_config={"リンク": st.column_config.LinkColumn("リンク")}
+        )
+    except Exception:
+        # 古いStreamlitなどで LinkColumn が無い場合のフォールバック
+        st.dataframe(df_events, use_container_width=True)
+
+    st.caption("※ 公式サイトの一覧/カレンダーから日付表記を抽出しています。表記ゆれにより取りこぼす場合があります。")
 
 # ---- 以降は既存どおり（天気プレビュー→入力→予測）----
 selected_season = []

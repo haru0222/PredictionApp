@@ -8,3 +8,5 @@ jpholiday>=0.1.8
 openpyxl>=3.1
 scikit-learn==1.6.1
 holidays>=0.57
+beautifulsoup4>=4.12
+
