@@ -10,7 +10,31 @@ import os
 import numpy as np
 import jpholiday
 
-# ========= 長期休み・繁忙期ユーティリティ =========
+# 追加インポート（世界の祝日）
+try:
+    import holidays as pyholidays
+except Exception:
+    pyholidays = None
+
+from functools import lru_cache
+import datetime as dt
+
+# 国コード→表示名（必要な国はここに足せます）
+COUNTRIES = {
+    "JP": "日本", "CN": "中国", "US": "アメリカ", "KR": "韓国",
+    "TW": "台湾", "HK": "香港", "SG": "シンガポール", "TH": "タイ", "VN": "ベトナム",
+    "MY": "マレーシア", "ID": "インドネシア", "PH": "フィリピン",
+    "GB": "イギリス", "FR": "フランス", "DE": "ドイツ", "IT": "イタリア", "ES": "スペイン",
+    "CA": "カナダ", "AU": "オーストラリア", "IN": "インド", "BR": "ブラジル"
+}
+
+# 地域差が大きい国の州・省コードを必要なら指定（例：US:CA など）
+SUBDIV = {
+    # "US": "CA",
+    # "CN": None,
+}
+
+# ========= 日本の長期休み・繁忙期ユーティリティ =========
 def get_all_long_holidays(year):
     import datetime as dt
     obon_days = [dt.date(year, 8, d) for d in range(13, 17)]
@@ -38,8 +62,13 @@ def get_all_long_holidays(year):
     long_holidays.update(summer + winter + spring)
     return long_holidays
 
-LONG_HOLIDAY_DAYS = get_all_long_holidays(datetime.date.today().year)
-def is_long_holiday(date): return date in LONG_HOLIDAY_DAYS
+@lru_cache(maxsize=8)
+def _long_holiday_days_for_year(year: int):
+    return get_all_long_holidays(year)
+
+def is_long_holiday(date):
+    # 年越し対応（選択日付の年で判定）
+    return date in _long_holiday_days_for_year(date.year)
 
 def is_crowded_day(date):
     y = date.year
@@ -50,6 +79,68 @@ def is_crowded_day(date):
         datetime.date(y, 8, 13) <= date <= datetime.date(y, 8, 16) or
         datetime.date(y, 4, 29) <= date <= datetime.date(y, 5, 6)
     )
+
+# ========= 世界の祝日・長期連休ユーティリティ =========
+@lru_cache(maxsize=256)
+def _country_holidays_cached(code: str, year: int, subdiv):
+    """holidays.CountryHoliday の構築を年×国×subdivでキャッシュ"""
+    if pyholidays is None:
+        return None
+    try:
+        h = pyholidays.CountryHoliday(code, years=[year, year + 1], subdiv=subdiv)
+        return h
+    except Exception:
+        return None
+
+def get_international_holidays(date):
+    """date に該当する各国の祝日名を ['中国：春节', 'アメリカ：Independence Day', ...] 形式で返す"""
+    results = []
+    if pyholidays is None:
+        return results
+    for code, label in COUNTRIES.items():
+        h = _country_holidays_cached(code, date.year, SUBDIV.get(code))
+        if not h:
+            continue
+        if date in h:
+            names = h.get(date)
+            if isinstance(names, (list, tuple, set)):
+                name_str = "・".join(map(str, names))
+            else:
+                name_str = str(names)
+            results.append(f"{label}：{name_str}")
+    return results
+
+def is_long_holiday_in_country(date, country_code):
+    """週末 or その国の公休日 を『休日らしい日』とみなし、3日以上連続に date が含まれるなら True"""
+    if country_code == "JP":
+        # 日本は既存ロジック（お盆・学校休み含む）を優先
+        return is_long_holiday(date)
+    if pyholidays is None:
+        return False
+
+    y = date.year
+    hol = _country_holidays_cached(country_code, y, SUBDIV.get(country_code))
+    holiday_set = set(hol.keys()) if hol else set()
+
+    # 年をまたぐ可能性あり：当年+前後を含めて走査
+    start = dt.date(y, 1, 1) - dt.timedelta(days=7)
+    days = [start + dt.timedelta(days=i) for i in range(370 + 14)]
+
+    def is_holiday_like(d):
+        return (d in holiday_set) or (d.weekday() >= 5)
+
+    block = []
+    for d in days:
+        if is_holiday_like(d):
+            block.append(d)
+        else:
+            if len(block) >= 3 and date in block:
+                return True
+            block = []
+    # 末尾ブロック
+    if len(block) >= 3 and date in block:
+        return True
+    return False
 
 # ========= モデル・各種データ読み込み =========
 sales_model = joblib.load("sales_model.pkl")
@@ -70,8 +161,8 @@ def fetch_weather_forecast(date):
     try:
         data = requests.get(url, timeout=10).json()
         for item in data.get("list", []):
-            dt = datetime.datetime.fromtimestamp(item["dt"])
-            if dt.date() == date:
+            dt_ = datetime.datetime.fromtimestamp(item["dt"])
+            if dt_.date() == date:
                 return item["weather"][0]["main"], item["main"]["temp_max"], item["main"]["temp_min"]
     except Exception:
         pass
@@ -132,7 +223,7 @@ FIXED_PRODUCT_COLUMNS = [
     "MS つぶつぶメロンシェイク",
     "PS桃スムージー",
     "SU100 あべ農園すいか100%生絞りジュース",
-    "NS100 切りたて梨100%生絞りジュース",
+    "NS100 切りたて梨100%生搾りジュース",
     "KPS まるごと巨峰とパインスムージー",
     "MK100 極早生みかん果汁100%ジュース",
     "IMO 蜜いもミルクシェイク",
@@ -153,6 +244,63 @@ if isinstance(selected_dates, tuple):
 elif isinstance(selected_dates, datetime.date):
     selected_dates = [selected_dates]
 
+# ---- 世界の祝日プレビュー（天気入力の前）----
+if selected_dates:
+    st.write("### 🌍 国横断：その日がどこの国の祝日・長期連休に当たるか（プレビュー）")
+
+    if pyholidays is None:
+        st.info("世界の祝日判定には 'holidays' パッケージが必要です。requirements.txt に 'holidays>=0.57' を追加後、再実行してください。")
+
+    rows = []
+    for d in selected_dates:
+        hits = get_international_holidays(d)  # 祝日名ヒット（国名：祝日名）
+        long_hits = []
+        # 全対象国で「長期連休」ヒットを拾う（祝日名が無くても週末合体で3連休+ならヒットさせる）
+        for code, label in COUNTRIES.items():
+            try:
+                if is_long_holiday_in_country(d, code):
+                    long_hits.append(f"{label}：長期連休")
+            except Exception:
+                continue
+
+        if not hits and not long_hits:
+            status = "該当なし"
+        else:
+            status = " / ".join(hits + long_hits)
+
+        rows.append({
+            "日付": d.strftime("%Y-%m-%d"),
+            "該当国の祝日・長期連休": status
+        })
+
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+    # 詳細（国別）を折り畳みで
+    with st.expander("国別の詳細（祝日名／長期連休ヒット）"):
+        detail_rows = []
+        for d in selected_dates:
+            # 1回だけ取得してから国別に整形（無駄な再計算を減らす）
+            names_all = get_international_holidays(d)  # ['中国：春节', 'アメリカ：Independence Day', ...]
+            by_country = {}
+            for s in names_all:
+                if "：" in s:
+                    label, name = s.split("：", 1)
+                    by_country[label] = (by_country.get(label, []) + [name])
+            for code, label in COUNTRIES.items():
+                long_f = is_long_holiday_in_country(d, code)
+                if (label in by_country) or long_f:
+                    detail_rows.append({
+                        "日付": d.strftime("%Y-%m-%d"),
+                        "国": label,
+                        "祝日名": " / ".join(by_country.get(label, [])),
+                        "長期連休": "◯" if long_f else ""
+                    })
+        if detail_rows:
+            st.dataframe(pd.DataFrame(detail_rows), use_container_width=True)
+        else:
+            st.info("該当なし")
+
+# ---- 以降は既存どおり（天気プレビュー→入力→予測）----
 selected_season = []
 if selected_dates:
     st.write("### 🌤️ 選択日付の天気と気温（前年データも含む）")
@@ -232,7 +380,7 @@ if st.button("予測を実行"):
         date_str = entry['date'].strftime('%Y-%m-%d')
         feat = make_features(entry)
 
-        # 売上予測
+        # 売上予測（※ multiplier はご提示どおり 1.0 のまま）
         raw_sales = sales_model.predict(feat.drop(columns=["売上", "繁忙期フラグ"]))[0]
         multiplier = 1.0 if feat.at[0, "繁忙期フラグ"] == 1 else 1.0
         pred_sales = int(raw_sales * multiplier)
@@ -264,14 +412,12 @@ if st.button("予測を実行"):
 
         # 後ろに“その他商品”を並べる（PS桃スムージーの後）
         others = sorted(list(all_products_used - set(FIXED_PRODUCT_COLUMNS)))
-        # ここでこの日のqtyも入れておく（列は後で作るが辞書に持たせる）
         for prod in others:
             row[prod] = qty_dict.get(prod, "")
 
         rows_for_table.append(row)
 
     # 列構成：基本 → 固定商品 → その他商品（PS桃スムージーの後）
-    # 全日の“その他”候補を集め直し
     all_other_products = sorted(list((all_products_used - set(FIXED_PRODUCT_COLUMNS))))
     final_columns = BASE_COLUMNS + FIXED_PRODUCT_COLUMNS + all_other_products
 
@@ -289,6 +435,9 @@ if st.button("予測を実行"):
     tsv = df_out.to_csv(sep="\t", index=False)
     st.text_area("TSV", tsv, height=200)
 
-    st.download_button("CSVをダウンロード", data=df_out.to_csv(index=False).encode("utf-8-sig"),
-                       file_name=f"pred_{datetime.date.today().isoformat()}.csv", mime="text/csv")
-
+    st.download_button(
+        "CSVをダウンロード",
+        data=df_out.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"pred_{datetime.date.today().isoformat()}.csv",
+        mime="text/csv"
+    )
