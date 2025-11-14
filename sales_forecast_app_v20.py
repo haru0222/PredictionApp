@@ -38,24 +38,69 @@ BIG_EVENT_KEYWORDS = [
 ]
 
 def _filter_big_events(events):
-    """本当に人が多く来る大規模イベントだけに絞るフィルタ"""
+    """本当に人が多く来る大規模イベントだけに絞るフィルタ（ノイズ除去つき）"""
     big_events = []
+
+    # サイトのUIテキスト・検索説明など、明らかにイベント名じゃないもの
+    noise_keywords = [
+        "アクセス", "フロアマップ", "イベント情報", "ショップ＆レストラン",
+        "イベント検索", "日付検索", "検索結果",
+        "カレンダー", "カレンダーから探す",
+        "ジャンル", "条件選択",
+        "カテゴリーから探す", "キーワードから探す",
+        "年間の主要イベント",
+        "イベント・キャンペーン",
+    ]
+
+    # 日常寄りのロングラン企画（売上にあまり効かなそうなもの）
+    small_odaiba_keywords = [
+        "お台場たこ焼きミュージアム",
+        "台場一丁目商店街",
+        "デックス東京ビーチ",
+    ]
+
     for ev in events:
         title = ev.get("イベント（抜粋）", "")
         venue = ev.get("会場", "")
+        start_s = ev.get("開始日") or ""
+        end_s = ev.get("終了日") or ""
 
-        # 1. 東京ビッグサイト → 全部残す
-        if venue == "東京ビッグサイト":
+        # 1) そもそもイベント名っぽくない（ページの説明文など）は即除外
+        if any(k in title for k in noise_keywords):
+            continue
+
+        # 期間（日数）を計算（失敗したら1日扱い）
+        try:
+            start = datetime.date.fromisoformat(start_s)
+            end = datetime.date.fromisoformat(end_s)
+            days = (end - start).days + 1
+        except Exception:
+            start = end = None
+            days = 1
+
+        # 2) お台場たこ焼きミュージアムなど、常設寄りの企画を明示的にカット
+        if any(k in title for k in small_odaiba_keywords):
+            continue
+
+        # 3) 東京ビッグサイト本体 or タイトルにビッグサイトと書いてある → 大規模扱いで残す
+        if venue == "東京ビッグサイト" or "東京ビッグサイト" in title:
             big_events.append(ev)
             continue
 
-        # 2. ダイバーシティ/お台場 → キーワードが入っているものだけ残す
+        # 4) それ以外の会場（ダイバーシティ・防災公園など）
+
+        #   4-1) 10日以上続く長期企画は、常設寄りとして除外（ビッグサイト以外）
+        if days >= 10:
+            continue
+
+        #   4-2) 「フェス」「エキスポ」など “イベントっぽい” キーワードがあるものだけ残す
         if any(k in title for k in BIG_EVENT_KEYWORDS):
             big_events.append(ev)
             continue
 
-        # それ以外は除外（コラボカフェや小規模ポップアップ等）
+        # それ以外はスルー（小さいイベント扱い）
     return big_events
+
 
 # 日付表記のゆれに対応した正規表現（日本語寄り）
 # 例：2025/10/1～2025/10/3, 2025年10月1日〜3日, 10/01(水)〜10/03(金) など
