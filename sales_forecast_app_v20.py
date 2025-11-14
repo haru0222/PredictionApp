@@ -38,10 +38,10 @@ BIG_EVENT_KEYWORDS = [
 ]
 
 def _filter_big_events(events):
-    """本当に人が多く来る大規模イベントだけに絞るフィルタ（ノイズ除去つき）"""
+    """本当に人が多く来る大規模イベントだけに絞るフィルタ（ノイズ除去＋重複削除つき）"""
     big_events = []
 
-    # サイトのUIテキスト・検索説明など、明らかにイベント名じゃないもの
+    # サイトのUIテキスト・検索説明・商談系など、明らかにイベント名じゃないもの
     noise_keywords = [
         "アクセス", "フロアマップ", "イベント情報", "ショップ＆レストラン",
         "イベント検索", "日付検索", "検索結果",
@@ -50,6 +50,10 @@ def _filter_big_events(events):
         "カテゴリーから探す", "キーワードから探す",
         "年間の主要イベント",
         "イベント・キャンペーン",
+        "入場区分",          # 商談系のヘッダごと全部カット
+        "開催期間",          # 「開催期間 2025年…」だけの行をカット
+        "開催時間",          # 時間だけの行
+        "商談日時",          # 商談日時だけの行
     ]
 
     # 日常寄りのロングラン企画（売上にあまり効かなそうなもの）
@@ -59,6 +63,9 @@ def _filter_big_events(events):
         "デックス東京ビーチ",
     ]
 
+    # 同じイベント名＋会場＋期間を重複させないためのセット
+    seen_keys = set()
+
     for ev in events:
         title = ev.get("イベント（抜粋）", "")
         venue = ev.get("会場", "")
@@ -67,6 +74,11 @@ def _filter_big_events(events):
 
         # 1) そもそもイベント名っぽくない（ページの説明文など）は即除外
         if any(k in title for k in noise_keywords):
+            continue
+
+        # 1.5) 「2025-11-14 ～ 2025-11-15 東京ビッグサイト」みたいな
+        #      日付＋会場だけで、イベント名が無い行も除外
+        if re.match(r"\d{4}-\d{2}-\d{2}\s*～\s*\d{4}-\d{2}-\d{2}", title):
             continue
 
         # 期間（日数）を計算（失敗したら1日扱い）
@@ -82,23 +94,40 @@ def _filter_big_events(events):
         if any(k in title for k in small_odaiba_keywords):
             continue
 
+        keep = False
+
         # 3) 東京ビッグサイト本体 or タイトルにビッグサイトと書いてある → 大規模扱いで残す
         if venue == "東京ビッグサイト" or "東京ビッグサイト" in title:
-            big_events.append(ev)
+            keep = True
+        else:
+            # 4) それ以外の会場（ダイバーシティ・防災公園など）
+            #   4-1) 10日以上続く長期企画は、常設寄りとして除外
+            if days >= 10:
+                keep = False
+            else:
+                #   4-2) 「フェス」「エキスポ」など “イベントっぽい” キーワードがあるものだけ残す
+                if any(k in title for k in BIG_EVENT_KEYWORDS):
+                    keep = True
+
+        if not keep:
             continue
 
-        # 4) それ以外の会場（ダイバーシティ・防災公園など）
+        # 5) 「デザインフェスタ」が複数行出る問題への対処：
+        #    タイトルを正規化して、同じイベントは1行にまとめる
+        norm_title = title
+        if "デザインフェスタ" in norm_title:
+            norm_title = "デザインフェスタ"
+        elif "アミューズメント エキスポ" in norm_title:
+            norm_title = "アミューズメント エキスポ"
 
-        #   4-1) 10日以上続く長期企画は、常設寄りとして除外（ビッグサイト以外）
-        if days >= 10:
+        key = (venue, start_s, end_s, norm_title)
+        if key in seen_keys:
+            # すでに同じイベント（同会場・同期間・同名）があるのでスキップ
             continue
+        seen_keys.add(key)
 
-        #   4-2) 「フェス」「エキスポ」など “イベントっぽい” キーワードがあるものだけ残す
-        if any(k in title for k in BIG_EVENT_KEYWORDS):
-            big_events.append(ev)
-            continue
+        big_events.append(ev)
 
-        # それ以外はスルー（小さいイベント扱い）
     return big_events
 
 
