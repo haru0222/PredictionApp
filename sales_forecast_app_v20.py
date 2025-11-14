@@ -26,6 +26,37 @@ EVENT_SOURCES_JP = [
     ("https://www.tokyo-odaiba.net/event_calender/", "お台場（公式カレンダー）"),
 ]
 
+# --------------------------------------------
+# 大規模イベントだけに絞るフィルタ関数
+# --------------------------------------------
+BIG_EVENT_KEYWORDS = [
+    "フェス", "フェスタ", "祭",
+    "博", "博覧会", "展示会", "見本市",
+    "エキスポ", "EXPO",
+    "コミックマーケット", "コミケ",
+    "フェア", "ショー",
+]
+
+def _filter_big_events(events):
+    """本当に人が多く来る大規模イベントだけに絞るフィルタ"""
+    big_events = []
+    for ev in events:
+        title = ev.get("イベント（抜粋）", "")
+        venue = ev.get("会場", "")
+
+        # 1. 東京ビッグサイト → 全部残す
+        if venue == "東京ビッグサイト":
+            big_events.append(ev)
+            continue
+
+        # 2. ダイバーシティ/お台場 → キーワードが入っているものだけ残す
+        if any(k in title for k in BIG_EVENT_KEYWORDS):
+            big_events.append(ev)
+            continue
+
+        # それ以外は除外（コラボカフェや小規模ポップアップ等）
+    return big_events
+
 # 日付表記のゆれに対応した正規表現（日本語寄り）
 # 例：2025/10/1～2025/10/3, 2025年10月1日〜3日, 10/01(水)〜10/03(金) など
 RANGE_PATTERNS = [
@@ -358,6 +389,7 @@ FIXED_PRODUCT_COLUMNS = [
     "KPS まるごと巨峰とパインスムージー",
     "MK100 極早生みかん果汁100%ジュース",
     "IMO 蜜いもミルクシェイク",
+    "【BF限定】GKB 黒ゴマきなこのバナナミルク", # APK置きたい暫定でおいてる
 ]
 
 # ========= UI =========
@@ -431,6 +463,7 @@ if selected_dates:
     event_rows = []
     for d in selected_dates:
         found = _scan_event_pages_jp(d)
+        found = _filter_big_events(found)
         if found:
             for ev in found:
                 event_rows.append({
