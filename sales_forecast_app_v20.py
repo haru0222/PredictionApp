@@ -326,13 +326,11 @@ def _scan_event_pages_jp(target_date: datetime.date):
 
 
 def render_event_calendar(selected_dates):
-    """bestcalendar風のカレンダー表示（選択日の「月」単位 / 一覧と同じイベントソースを使用）
-       同じイベントが連続している日は1セルにまとめて横に伸ばす
-    """
+    """bestcalendar風：1週の中でイベントをレーンに詰めて横バー表示"""
     if not selected_dates:
         return
 
-    # CSS（1回だけでOK）
+    # CSS
     calendar_css = """
     <style>
     .event-calendar {
@@ -345,9 +343,8 @@ def render_event_calendar(selected_dates):
     .event-calendar td {
         border: 1px solid #ddd;
         vertical-align: top;
-        height: 90px;          /* 固定高さ */
+        height: 40px;          /* 行を少し低めにして全体の縦を抑える */
         padding: 2px;
-        overflow-y: auto;      /* 内容が多い場合だけ内部スクロール */
     }
     .event-calendar th {
         background: #f0f0f0;
@@ -360,7 +357,7 @@ def render_event_calendar(selected_dates):
     }
     .event-badge {
         display: block;
-        margin-bottom: 2px;
+        margin: 2px 0;
         padding: 2px 3px;
         border-radius: 3px;
         background: #4caf50;
@@ -386,7 +383,7 @@ def render_event_calendar(selected_dates):
     """
     st.markdown(calendar_css, unsafe_allow_html=True)
 
-    # 選択された日付から「表示する年月」の集合を作る
+    # 表示する年月
     months = sorted({(d.year, d.month) for d in selected_dates})
     today = datetime.date.today()
 
@@ -410,7 +407,7 @@ def render_event_calendar(selected_dates):
                 if key not in all_events:
                     all_events[key] = ev
 
-        # 月内での開始・終了日に切り詰めたイベントリストを作成
+        # 月内での開始・終了日に切り詰めたイベントリスト
         events_in_month = []
         for ev in all_events.values():
             try:
@@ -430,7 +427,6 @@ def render_event_calendar(selected_dates):
                 "ev": ev,
             })
 
-        # カレンダーヘッダ
         st.write(f"##### {year}年{month}月")
 
         cal = calendar.Calendar(firstweekday=6)  # 日曜始まり
@@ -457,44 +453,68 @@ def render_event_calendar(selected_dates):
                 html += f"<td{class_attr}><div class='event-date'>{d.day}</div></td>"
             html += "</tr>"
 
-            # この週にかかっているイベントを抽出（週の範囲内に少しでもかかっていれば対象）
+            # この週にかかっているイベントを抽出し、週内インデックスを付与
             week_events = []
             for info in events_in_month:
                 if info["end"] < week_start or info["start"] > week_end:
                     continue
                 s = max(info["start"], week_start)
                 e = min(info["end"], week_end)
+                try:
+                    s_idx = week.index(s)
+                    e_idx = week.index(e)
+                except ValueError:
+                    continue
                 week_events.append({
-                    "start": s,
-                    "end": e,
+                    "start_idx": s_idx,
+                    "end_idx": e_idx,
                     "ev": info["ev"],
                 })
 
-            # 各イベントごとに「横に伸びる行」を1つずつ描画
-            for wev in week_events:
+            # 開始位置→長さ順にソート（長いバーを先に）
+            week_events.sort(key=lambda x: (x["start_idx"], -(x["end_idx"] - x["start_idx"])))
+
+            # レーン詰め（重ならないイベントを同じ行に乗せる）
+            lanes = []  # [[ev1, ev2,...], ...]
+            for ev in week_events:
+                placed = False
+                for lane in lanes:
+                    # 最後のイベントと重ならなければ同じレーンに乗せる
+                    if ev["start_idx"] > lane[-1]["end_idx"]:
+                        lane.append(ev)
+                        placed = True
+                        break
+                if not placed:
+                    lanes.append([ev])
+
+            # 各レーンを1行として描画（bestcalendarの横バーに近い）
+            for lane in lanes:
                 row_event = "<tr>"
-                s_idx = week.index(wev["start"])
-                e_idx = week.index(wev["end"])
                 col = 0
+                idx = 0
                 while col < 7:
-                    if col < s_idx:
-                        row_event += "<td></td>"
-                        col += 1
-                    elif col == s_idx:
-                        span = e_idx - s_idx + 1
-                        title = wev["ev"]["イベント（抜粋）"]
+                    d = week[col]
+                    if idx < len(lane) and col == lane[idx]["start_idx"]:
+                        span = lane[idx]["end_idx"] - col + 1
+                        title = lane[idx]["ev"]["イベント（抜粋）"]
                         if len(title) > 20:
                             title = title[:19] + "…"
-                        site = wev["ev"]["会場"]
+                        site = lane[idx]["ev"]["会場"]
                         row_event += (
                             f"<td colspan='{span}'>"
                             f"<span class='event-badge'>{title}"
                             f"<span class='event-site'>（{site}）</span>"
                             f"</span></td>"
                         )
-                        col = e_idx + 1
+                        col += span
+                        idx += 1
                     else:
-                        row_event += "<td></td>"
+                        # 空きマス
+                        classes = []
+                        if d.month != month:
+                            classes.append("other-month")
+                        class_attr = f" class='{' '.join(classes)}'" if classes else ""
+                        row_event += f"<td{class_attr}></td>"
                         col += 1
                 row_event += "</tr>"
                 html += row_event
