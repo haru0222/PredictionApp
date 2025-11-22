@@ -35,6 +35,7 @@ BIG_EVENT_KEYWORDS = [
     "エキスポ", "EXPO",
     "コミックマーケット", "コミケ",
     "フェア", "ショー",
+    "花火","花火大会","HANABI",
 ]
 
 def _filter_big_events(events):
