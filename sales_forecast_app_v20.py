@@ -24,6 +24,8 @@ EVENT_SOURCES_JP = [
     # お台場 公式ポータル（イベント一覧・カレンダー）
     ("https://www.tokyo-odaiba.net/event_index/", "お台場（公式一覧）"),
     ("https://www.tokyo-odaiba.net/event_calender/", "お台場（公式カレンダー）"),
+    # Zepp DiverCity（ライブスケジュール）
+    ("https://www.zepp.co.jp/hall/divercity/schedule/", "Zepp DiverCity"),
 ]
 
 # --------------------------------------------
