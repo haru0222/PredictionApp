@@ -343,10 +343,8 @@ def render_event_calendar(selected_dates):
     }
     .event-calendar th,
     .event-calendar td {
-        border: 1px solid #ddd;
-        vertical-align: top;
-        height: 80px;
-        padding: 2px;
+        height: 90px;         
+        overflow-y: auto;     
     }
     .event-calendar th {
         background: #f0f0f0;
