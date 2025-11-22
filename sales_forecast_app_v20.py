@@ -273,14 +273,19 @@ def _scan_event_pages_jp(target_date: datetime.date):
                     })
                     break  # そのノードからは1件だけ拾う
 
-    # 重複除去（会場×期間×抜粋でユニーク化）
+    # 重複除去（開始日×終了日×タイトルでユニーク化）
     uniq, seen = [], set()
     for h in hits:
-        key = (h["会場"], h["開始日"], h["終了日"], h["イベント（抜粋）"])
+        # タイトルの余計な空白を統一
+        title = " ".join(h["イベント（抜粋）"].split())
+        key = (h["開始日"], h["終了日"], title)
         if key not in seen:
             seen.add(key)
-            uniq.append(h)
+            h2 = dict(h)
+            h2["イベント（抜粋）"] = title
+            uniq.append(h2)
     return uniq
+
 def render_event_calendar(selected_dates):
     """bestcalendar風のカレンダー表示（選択日の「月」単位 / 一覧と同じイベントソースを使用）
        同じイベントが連続している日は1セルにまとめて横に伸ばす
