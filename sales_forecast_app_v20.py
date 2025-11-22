@@ -9,6 +9,7 @@ import joblib
 import os
 import numpy as np
 import jpholiday
+import calendar  
 
 # --- 日本語サイトのイベント プレビュー（ビッグサイト/ダイバーシティ/お台場） ---
 import re
@@ -280,6 +281,144 @@ def _scan_event_pages_jp(target_date: datetime.date):
             seen.add(key)
             uniq.append(h)
     return uniq
+def render_event_calendar(selected_dates):
+    """bestcalendar風のカレンダー表示（選択日の「月」単位 / 一覧と同じイベントソースを使用）"""
+    if not selected_dates:
+        return
+
+    # CSS（1回だけでOK）
+    calendar_css = """
+    <style>
+    .event-calendar {
+        border-collapse: collapse;
+        width: 100%;
+        table-layout: fixed;
+        font-size: 12px;
+    }
+    .event-calendar th,
+    .event-calendar td {
+        border: 1px solid #ddd;
+        vertical-align: top;
+        height: 80px;
+        padding: 2px;
+    }
+    .event-calendar th {
+        background: #f0f0f0;
+        text-align: center;
+    }
+    .event-date {
+        font-size: 11px;
+        font-weight: bold;
+        margin-bottom: 2px;
+    }
+    .event-badge {
+        display: block;
+        margin-bottom: 2px;
+        padding: 2px 3px;
+        border-radius: 3px;
+        background: #4caf50;
+        color: #fff;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font-size: 10px;
+    }
+    .event-site {
+        font-size: 9px;
+        opacity: 0.85;
+        margin-left: 2px;
+    }
+    .today-cell {
+        background: #fffde7;
+    }
+    .other-month {
+        background: #fafafa;
+        color: #bbbbbb;
+    }
+    </style>
+    """
+    st.markdown(calendar_css, unsafe_allow_html=True)
+
+    # 選択された日付から「表示する年月」の集合を作る
+    months = sorted({(d.year, d.month) for d in selected_dates})
+    today = datetime.date.today()
+
+    for year, month in months:
+        # その月の全日付
+        first = datetime.date(year, month, 1)
+        if month == 12:
+            next_month = datetime.date(year + 1, 1, 1)
+        else:
+            next_month = datetime.date(year, month + 1, 1)
+        last = next_month - datetime.timedelta(days=1)
+        days = [first + datetime.timedelta(days=i) for i in range((last - first).days + 1)]
+
+        # その月にかかっているイベントを収集
+        all_events = {}
+        for d in days:
+            found = _scan_event_pages_jp(d)
+            found = _filter_big_events(found)
+            for ev in found:
+                key = (ev["会場"], ev["開始日"], ev["終了日"], ev["イベント（抜粋）"])
+                if key not in all_events:
+                    all_events[key] = ev
+
+        # 日別に割り当て
+        events_by_day = {}
+        for ev in all_events.values():
+            try:
+                start = datetime.date.fromisoformat(ev["開始日"])
+                end = datetime.date.fromisoformat(ev["終了日"])
+            except Exception:
+                continue
+
+            # 表示月の範囲に切り詰める
+            cur_start = max(start, first)
+            cur_end = min(end, last)
+            d = cur_start
+            while d <= cur_end:
+                events_by_day.setdefault(d, []).append(ev)
+                d += datetime.timedelta(days=1)
+
+        # カレンダーヘッダ
+        st.write(f"##### {year}年{month}月")
+
+        cal = calendar.Calendar(firstweekday=6)  # 日曜始まり
+        weeks = cal.monthdatescalendar(year, month)
+
+        html = "<table class='event-calendar'><thead><tr>"
+        for wday in ["日", "月", "火", "水", "木", "金", "土"]:
+            html += f"<th>{wday}</th>"
+        html += "</tr></thead><tbody>"
+
+        for week in weeks:
+            html += "<tr>"
+            for d in week:
+                classes = []
+                if d.month != month:
+                    classes.append("other-month")
+                if d == today:
+                    classes.append("today-cell")
+                class_attr = f" class='{' '.join(classes)}'" if classes else ""
+                html += f"<td{class_attr}><div class='event-date'>{d.day}</div>"
+
+                # その日のイベントを表示
+                for ev in events_by_day.get(d, []):
+                    title = ev["イベント（抜粋）"]
+                    if len(title) > 20:
+                        title = title[:19] + "…"
+                    site = ev["会場"]
+                    html += (
+                        "<span class='event-badge'>"
+                        f"{title}<span class='event-site'>（{site}）</span>"
+                        "</span>"
+                    )
+
+                html += "</td>"
+            html += "</tr>"
+        html += "</tbody></table>"
+
+        st.markdown(html, unsafe_allow_html=True)
 
 # 追加インポート（世界の祝日）
 try:
@@ -566,6 +705,7 @@ if selected_dates:
 if selected_dates:
     st.write("### 🎪 ビッグサイト／ダイバーシティ東京プラザ／お台場：イベント開催プレビュー（日本語）")
 
+    # まずは従来どおり一覧用のデータを作る
     event_rows = []
     for d in selected_dates:
         found = _scan_event_pages_jp(d)
@@ -591,17 +731,30 @@ if selected_dates:
             })
 
     df_events = pd.DataFrame(event_rows)
-    try:
-        st.dataframe(
-            df_events,
-            use_container_width=True,
-            column_config={"リンク": st.column_config.LinkColumn("リンク")}
-        )
-    except Exception:
-        # 古いStreamlitなどで LinkColumn が無い場合のフォールバック
-        st.dataframe(df_events, use_container_width=True)
 
-    st.caption("※ 公式サイトの一覧/カレンダーから日付表記を抽出しています。表記ゆれにより取りこぼす場合があります。")
+    # 表示形式の切り替え（C. ボタンで切り替え）
+    view_mode = st.radio(
+        "イベント表示形式",
+        ["一覧", "カレンダー"],
+        horizontal=True,
+        key="event_view_mode",
+    )
+
+    if view_mode == "一覧":
+        # 従来のテーブル表示
+        try:
+            st.dataframe(
+                df_events,
+                use_container_width=True,
+                column_config={"リンク": st.column_config.LinkColumn("リンク")},
+            )
+        except Exception:
+            st.dataframe(df_events, use_container_width=True)
+
+        st.caption("※ 公式サイトの一覧/カレンダーから日付表記を抽出しています。表記ゆれにより取りこぼす場合があります。")
+    else:
+        # 新しいカレンダー表示（選択日の「月」全体を表示）
+        render_event_calendar(selected_dates)
 
 # ---- 以降は既存どおり（天気プレビュー→入力→予測）----
 selected_season = []
