@@ -259,11 +259,12 @@ def _normalize_event_title(text: str) -> str:
     for w in noise_words:
         t = t.replace(w, "")
 
-    # 不要な日付列挙を削除（2025/11/22,2025/11/23,2025/11/24 みたいな複数日羅列）
+    # 不要な日付列挙を削除（2025/11/22,2025/11/23,2025/11/24 の羅列）
     t = re.sub(r"\d{4}/\d{1,2}/\d{1,2}(?:\([^)]*\))?(?:,|，)?", "", t)
 
-    # スペース再整形
-    t = " ".join(t.split())
+    # 追加：ユニクロ・GU 感謝祭は完全統一（最重要）
+    if "ユニクロ" in t and "感謝祭" in t:
+        return "ユニクロ・GU感謝祭（大抽選会）"
 
     # 全角英数字 → 半角
     t = t.translate(str.maketrans(
@@ -271,7 +272,11 @@ def _normalize_event_title(text: str) -> str:
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     ))
 
+    # スペース再整形
+    t = " ".join(t.split())
+
     return t.strip()
+
 
 def _scan_event_pages_jp(target_date: datetime.date):
     """上記日本語ページを走査し、target_date を含むイベント候補を返す"""
