@@ -282,7 +282,9 @@ def _scan_event_pages_jp(target_date: datetime.date):
             uniq.append(h)
     return uniq
 def render_event_calendar(selected_dates):
-    """bestcalendar風のカレンダー表示（選択日の「月」単位 / 一覧と同じイベントソースを使用）"""
+    """bestcalendar風のカレンダー表示（選択日の「月」単位 / 一覧と同じイベントソースを使用）
+       同じイベントが連続している日は1セルにまとめて横に伸ばす
+    """
     if not selected_dates:
         return
 
@@ -353,7 +355,7 @@ def render_event_calendar(selected_dates):
         last = next_month - datetime.timedelta(days=1)
         days = [first + datetime.timedelta(days=i) for i in range((last - first).days + 1)]
 
-        # その月にかかっているイベントを収集
+        # その月にかかっているイベントを収集（重複除去）
         all_events = {}
         for d in days:
             found = _scan_event_pages_jp(d)
@@ -363,8 +365,8 @@ def render_event_calendar(selected_dates):
                 if key not in all_events:
                     all_events[key] = ev
 
-        # 日別に割り当て
-        events_by_day = {}
+        # 月内での開始・終了日に切り詰めたイベントリストを作成
+        events_in_month = []
         for ev in all_events.values():
             try:
                 start = datetime.date.fromisoformat(ev["開始日"])
@@ -372,13 +374,16 @@ def render_event_calendar(selected_dates):
             except Exception:
                 continue
 
-            # 表示月の範囲に切り詰める
             cur_start = max(start, first)
             cur_end = min(end, last)
-            d = cur_start
-            while d <= cur_end:
-                events_by_day.setdefault(d, []).append(ev)
-                d += datetime.timedelta(days=1)
+            if cur_start > cur_end:
+                continue
+
+            events_in_month.append({
+                "start": cur_start,
+                "end": cur_end,
+                "ev": ev,
+            })
 
         # カレンダーヘッダ
         st.write(f"##### {year}年{month}月")
@@ -392,6 +397,10 @@ def render_event_calendar(selected_dates):
         html += "</tr></thead><tbody>"
 
         for week in weeks:
+            week_start = week[0]
+            week_end = week[-1]
+
+            # 1行目：日付
             html += "<tr>"
             for d in week:
                 classes = []
@@ -400,25 +409,54 @@ def render_event_calendar(selected_dates):
                 if d == today:
                     classes.append("today-cell")
                 class_attr = f" class='{' '.join(classes)}'" if classes else ""
-                html += f"<td{class_attr}><div class='event-date'>{d.day}</div>"
-
-                # その日のイベントを表示
-                for ev in events_by_day.get(d, []):
-                    title = ev["イベント（抜粋）"]
-                    if len(title) > 20:
-                        title = title[:19] + "…"
-                    site = ev["会場"]
-                    html += (
-                        "<span class='event-badge'>"
-                        f"{title}<span class='event-site'>（{site}）</span>"
-                        "</span>"
-                    )
-
-                html += "</td>"
+                html += f"<td{class_attr}><div class='event-date'>{d.day}</div></td>"
             html += "</tr>"
-        html += "</tbody></table>"
 
+            # この週にかかっているイベントを抽出（週の範囲内に少しでもかかっていれば対象）
+            week_events = []
+            for info in events_in_month:
+                if info["end"] < week_start or info["start"] > week_end:
+                    continue
+                s = max(info["start"], week_start)
+                e = min(info["end"], week_end)
+                week_events.append({
+                    "start": s,
+                    "end": e,
+                    "ev": info["ev"],
+                })
+
+            # 各イベントごとに「横に伸びる行」を1つずつ描画
+            for wev in week_events:
+                row_event = "<tr>"
+                s_idx = week.index(wev["start"])
+                e_idx = week.index(wev["end"])
+                col = 0
+                while col < 7:
+                    if col < s_idx:
+                        row_event += "<td></td>"
+                        col += 1
+                    elif col == s_idx:
+                        span = e_idx - s_idx + 1
+                        title = wev["ev"]["イベント（抜粋）"]
+                        if len(title) > 20:
+                            title = title[:19] + "…"
+                        site = wev["ev"]["会場"]
+                        row_event += (
+                            f"<td colspan='{span}'>"
+                            f"<span class='event-badge'>{title}"
+                            f"<span class='event-site'>（{site}）</span>"
+                            f"</span></td>"
+                        )
+                        col = e_idx + 1
+                    else:
+                        row_event += "<td></td>"
+                        col += 1
+                row_event += "</tr>"
+                html += row_event
+
+        html += "</tbody></table>"
         st.markdown(html, unsafe_allow_html=True)
+
 
 # 追加インポート（世界の祝日）
 try:
