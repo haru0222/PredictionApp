@@ -243,6 +243,36 @@ def _fetch_html(url: str) -> str:
         pass
     return ""
 
+def _normalize_event_title(text: str) -> str:
+    """イベントタイトルを『重複判定用に標準化』する"""
+    t = text
+
+    # 改行・連続空白除去
+    t = " ".join(t.split())
+
+    # よく出るノイズ削除（ポイント会員・クレジット会員・お得情報…）
+    noise_words = [
+        "ポイント会員", "クレジット会員", "お得情報",
+        "NEW", "その他イベント",
+        "【館内入会限定】", "三井ショッピング", "三井ショッピン"
+    ]
+    for w in noise_words:
+        t = t.replace(w, "")
+
+    # 不要な日付列挙を削除（2025/11/22,2025/11/23,2025/11/24 みたいな複数日羅列）
+    t = re.sub(r"\d{4}/\d{1,2}/\d{1,2}(?:\([^)]*\))?(?:,|，)?", "", t)
+
+    # スペース再整形
+    t = " ".join(t.split())
+
+    # 全角英数字 → 半角
+    t = t.translate(str.maketrans(
+        "０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ",
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    ))
+
+    return t.strip()
+
 def _scan_event_pages_jp(target_date: datetime.date):
     """上記日本語ページを走査し、target_date を含むイベント候補を返す"""
     hits = []
@@ -273,18 +303,22 @@ def _scan_event_pages_jp(target_date: datetime.date):
                     })
                     break  # そのノードからは1件だけ拾う
 
-    # 重複除去（開始日×終了日×タイトルでユニーク化）
+    # 完全重複除去（開始日×終了日×正規化タイトル）
     uniq, seen = [], set()
     for h in hits:
-        # タイトルの余計な空白を統一
-        title = " ".join(h["イベント（抜粋）"].split())
-        key = (h["開始日"], h["終了日"], title)
-        if key not in seen:
-            seen.add(key)
-            h2 = dict(h)
-            h2["イベント（抜粋）"] = title
-            uniq.append(h2)
+        norm_title = _normalize_event_title(h["イベント（抜粋）"])
+
+        key = (h["開始日"], h["終了日"], norm_title)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        h2 = dict(h)
+        h2["イベント（抜粋）"] = norm_title
+        uniq.append(h2)
+
     return uniq
+
 
 def render_event_calendar(selected_dates):
     """bestcalendar風のカレンダー表示（選択日の「月」単位 / 一覧と同じイベントソースを使用）
