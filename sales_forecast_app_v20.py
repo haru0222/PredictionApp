@@ -11,6 +11,11 @@ import numpy as np
 import jpholiday
 import calendar  
 
+
+def normalize_product_name(name: str) -> str:
+    """商品名の表記ゆれを吸収（スペース→'_' に統一）。"""
+    return "_".join(str(name).split())
+
 # --- 日本語サイトのイベント プレビュー（ビッグサイト/ダイバーシティ/お台場） ---
 import re
 from functools import lru_cache
@@ -652,13 +657,31 @@ def is_long_holiday_in_country(date, country_code):
     return False
 
 # ========= モデル・各種データ読み込み =========
-sales_model = joblib.load("sales_model.pkl")
+# sales_model.pkl は「モデル単体」または「{"model": ..., "feature_cols": ...}」のどちらでも対応
+sales_bundle = joblib.load("sales_model.pkl")
+sales_model = sales_bundle["model"] if isinstance(sales_bundle, dict) and "model" in sales_bundle else sales_bundle
+sales_feature_cols = sales_bundle.get("feature_cols") if isinstance(sales_bundle, dict) else None
+
+# 商品別モデルも同様に辞書形式に対応
 product_model_paths = joblib.load("product_model_paths.pkl")
-product_models = {name: joblib.load(path) for name, path in product_model_paths.items() if os.path.exists(path)}
+
+product_models = {}
+product_feature_cols = {}
+for name, path in product_model_paths.items():
+    if not os.path.exists(path):
+        continue
+    b = joblib.load(path)
+    key = normalize_product_name(name)
+    if isinstance(b, dict) and "model" in b:
+        product_models[key] = b["model"]
+        product_feature_cols[key] = b.get("feature_cols")
+    else:
+        product_models[key] = b
+        product_feature_cols[key] = None
 
 df_menu = pd.read_csv("商品別売上_統合_統合済v1.13.csv")
-constant_items = df_menu[df_menu["恒常メニュー"] == 1]["商品名"].unique().tolist()
-seasonal_items_all = df_menu[df_menu["シーズンメニュー"] == 1]["商品名"].unique().tolist()
+constant_items = [normalize_product_name(x) for x in df_menu[df_menu["恒常メニュー"] == 1]["商品名"].unique().tolist()]
+seasonal_items_all = [normalize_product_name(x) for x in df_menu[df_menu["シーズンメニュー"] == 1]["商品名"].unique().tolist()]
 
 API_KEY = st.secrets.get("OPENWEATHER_API_KEY", "")
 CITY_NAME = st.secrets.get("CITY_NAME", "Odaiba,JP")
@@ -741,8 +764,10 @@ FIXED_PRODUCT_COLUMNS = [
     "AP100 赤石農園りんご生絞りジュース",
     "STY  国産つぶつぶいちごミルクヨーグルト",
     "MK100 愛媛みかん100%生絞りジュース",
+    "MK100 青島みかん100%生絞りジュース",
 ]
 
+FIXED_PRODUCT_COLUMNS = [normalize_product_name(x) for x in FIXED_PRODUCT_COLUMNS]
 # ========= UI =========
 st.set_page_config(page_title="売上・商品数予測アプリ", layout="wide")
 st.title("売上・商品数予測アプリ")
@@ -943,7 +968,8 @@ if st.button("予測を実行"):
         feat = make_features(entry)
 
         # 売上予測（※ multiplier はご提示どおり 1.0 のまま）
-        raw_sales = sales_model.predict(feat.drop(columns=["売上", "繁忙期フラグ"]))[0]
+        X_sales = feat[sales_feature_cols] if sales_feature_cols else feat.drop(columns=["売上", "繁忙期フラグ"])
+        raw_sales = sales_model.predict(X_sales)[0]
         multiplier = 1.0 if feat.at[0, "繁忙期フラグ"] == 1 else 1.0
         pred_sales = int(raw_sales * multiplier)
 
@@ -952,7 +978,9 @@ if st.button("予測を実行"):
         qty_dict = {}
         for item in (constant_items + selected_season):
             if item in product_models:
-                qty = int(product_models[item].predict(feat.drop(columns=["繁忙期フラグ"]))[0])
+                cols = product_feature_cols.get(item)
+                X_prod = feat[cols] if cols else feat.drop(columns=["繁忙期フラグ"])
+                qty = int(product_models[item].predict(X_prod)[0])
                 qty_dict[item] = qty
             # モデルなしは未出力にしてOK（列は後で作るが値は空）
             all_products_used.add(item)
