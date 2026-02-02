@@ -953,8 +953,6 @@ if selected_dates:
     st.write("### シーズンメニュー選択")
     with st.expander("シーズンメニューを選ぶ"):
         selected_season = st.multiselect("出力するシーズンメニューを選んでください", seasonal_items_all)
-        # 念のため正規化（スペース→_）
-        selected_season = [normalize_product_name(x) for x in selected_season]
 
 # ========= 実行ボタン =========
 if st.button("予測を実行"):
@@ -979,7 +977,6 @@ if st.button("予測を実行"):
         feat["売上"] = pred_sales
         qty_dict = {}
         for item in (constant_items + selected_season):
-            item = normalize_product_name(item)
             if item in product_models:
                 cols = product_feature_cols.get(item)
                 X_prod = feat[cols] if cols else feat.drop(columns=["繁忙期フラグ"])
