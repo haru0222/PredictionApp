@@ -16,12 +16,6 @@ def normalize_product_name(name: str) -> str:
     """商品名の表記ゆれを吸収（スペース→'_' に統一）。"""
     return "_".join(str(name).split())
 
-# UI上で「恒常/シーズン」の扱いを強制したい商品がある場合はここで指定
-# 例：BLS を常に出すのではなく、シーズン選択式にしたい
-FORCE_SEASONAL_ITEMS = {
-    normalize_product_name("BLS ブルーレモンソーダ"),
-}
-
 # --- 日本語サイトのイベント プレビュー（ビッグサイト/ダイバーシティ/お台場） ---
 import re
 from functools import lru_cache
@@ -689,10 +683,6 @@ df_menu = pd.read_csv("商品別売上_統合_統合済v1.13.csv")
 constant_items = [normalize_product_name(x) for x in df_menu[df_menu["恒常メニュー"] == 1]["商品名"].unique().tolist()]
 seasonal_items_all = [normalize_product_name(x) for x in df_menu[df_menu["シーズンメニュー"] == 1]["商品名"].unique().tolist()]
 
-# 強制的に「シーズン選択」に回したい商品がある場合（例：BLS）
-constant_items = [x for x in constant_items if x not in FORCE_SEASONAL_ITEMS]
-seasonal_items_all = sorted(set(seasonal_items_all) | set(FORCE_SEASONAL_ITEMS))
-
 API_KEY = st.secrets.get("OPENWEATHER_API_KEY", "")
 CITY_NAME = st.secrets.get("CITY_NAME", "Odaiba,JP")
 df_prev_weather = pd.read_csv("前年_東京羽田_天気気温.csv")
@@ -758,6 +748,7 @@ FIXED_PRODUCT_COLUMNS = [
     "12 LMNゴクゴクレモネードソーダ",
     "13 LLS搾りたてレモンライムソーダ",
     "14 PGS搾りたてピンクグレープフルーツソーダ",
+    "BLS ブルーレモンソーダ",
     "SS 東京サンセットソーダ",
     "GY グリークヨーグルト",
     "SU100 君島農園すいか100%生絞りジュース",
@@ -768,7 +759,7 @@ FIXED_PRODUCT_COLUMNS = [
     "KPS まるごと巨峰とパインスムージー",
     "MK100 極早生みかん果汁100%ジュース",
     "IMO 蜜いもミルクシェイク",
-    "ACAIB アサイーボウル", # APK置きたい暫定でおいてる
+    "APK ざくざく果実の青りんごキウイ", # APK置きたい暫定でおいてる
     "【BF限定】GKB 黒ゴマきなこのバナナミルク", 
     "AP100 赤石農園りんご生絞りジュース",
     "STY  国産つぶつぶいちごミルクヨーグルト",
