@@ -769,12 +769,13 @@ FIXED_PRODUCT_COLUMNS = [
     "KPS まるごと巨峰とパインスムージー",
     "MK100 極早生みかん果汁100%ジュース",
     "IMO 蜜いもミルクシェイク",
-    "APK_ざくざく果実の青りんごキウイ", # APK置きたい暫定でおいてる
+    "APK_ざくざく果実の青りんごキウイ", 
     "【BF限定】GKB 黒ゴマきなこのバナナミルク", 
     "AP100 赤石農園りんご生絞りジュース",
     "STY  国産つぶつぶいちごミルクヨーグルト",
     "MK100 愛媛みかん100%生絞りジュース",
     "MK100 青島みかん100%生絞りジュース",
+    "STつぶつぶあまおういちごミルク",
 ]
 
 FIXED_PRODUCT_COLUMNS = [normalize_product_name(x) for x in FIXED_PRODUCT_COLUMNS]
