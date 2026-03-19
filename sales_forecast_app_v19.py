@@ -902,7 +902,6 @@ if selected_dates:
 
 # ---- 以降は既存どおり（天気プレビュー→入力→予測）----
 selected_season = []
-date_inputs = []
 if selected_dates:
     st.write("### 🌤️ 選択日付の天気と気温（前年データも含む）")
     weather_rows = []
@@ -937,34 +936,34 @@ if selected_dates:
     st.dataframe(pd.DataFrame(weather_rows), use_container_width=True)
 
     st.write("### 各日付の情報入力")
+    date_inputs = []
     for date in selected_dates:
-        date_key = date.strftime("%Y%m%d")
-        with st.expander(f"{date.strftime('%Y-%m-%d')} の設定", expanded=True):
+        with st.expander(f"{date.strftime('%Y-%m-%d')} の設定"):
             delta = (date - today).days
             if delta <= 7:
                 weather, temp_max, temp_min = fetch_weather_forecast(date)
                 if weather is None:
                     st.warning("天気取得失敗。手動で入力してください。")
-                    temp_max = st.number_input("最高気温", key=f"max_manual_{date_key}", step=1, value=20)
-                    temp_min = st.number_input("最低気温", key=f"min_manual_{date_key}", step=1, value=20)
-                    weather = st.selectbox("天気", ["晴れ", "曇り", "雨"], key=f"weather_manual_{date_key}")
+                    temp_max = st.number_input("最高気温", key=f"max_manual_{date}", step=1, value=20)
+                    temp_min = st.number_input("最低気温", key=f"min_manual_{date}", step=1, value=20)
+                    weather = st.selectbox("天気", ["晴れ", "曇り", "雨"], key=f"weather_manual_{date}")
                 else:
                     # 英語天気→和名候補
                     candidates = ["晴れ", "曇り", "雨"]
                     default = 0
                     if weather in ["Clear", "Clouds", "Rain"]:
                         default = ["Clear", "Clouds", "Rain"].index(weather)
-                    weather = st.selectbox("天気", candidates, index=default, key=f"weather_{date_key}")
-                    temp_max = st.number_input("最高気温", key=f"max_{date_key}", value=int(temp_max) if temp_max else 20)
-                    temp_min = st.number_input("最低気温", key=f"min_{date_key}", value=int(temp_min) if temp_min else 20)
+                    weather = st.selectbox("天気", candidates, index=default, key=f"weather_{date}")
+                    temp_max = st.number_input("最高気温", key=f"max_{date}", value=int(temp_max) if temp_max else 20)
+                    temp_min = st.number_input("最低気温", key=f"min_{date}", value=int(temp_min) if temp_min else 20)
             else:
-                weather = st.selectbox("天気", ["晴れ", "曇り", "雨"], key=f"weather_{date_key}")
-                temp_max = st.number_input("最高気温", key=f"max_{date_key}", value=20)
-                temp_min = st.number_input("最低気温", key=f"min_{date_key}", value=20)
-            event = st.checkbox("イベント有無", key=f"event_{date_key}")
+                weather = st.selectbox("天気", ["晴れ", "曇り", "雨"], key=f"weather_{date}")
+                temp_max = st.number_input("最高気温", key=f"max_{date}", value=20)
+                temp_min = st.number_input("最低気温", key=f"min_{date}", value=20)
+            event = st.checkbox("イベント有無", key=f"event_{date}")
             manual_sales = st.number_input(
                 "予想売上（手入力・0なら自動予測を使用）",
-                key=f"manual_sales_{date_key}",
+                key=f"manual_sales_{date}",
                 min_value=0,
                 value=0,
                 step=1000
