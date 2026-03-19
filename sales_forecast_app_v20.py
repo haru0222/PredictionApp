@@ -777,7 +777,7 @@ FIXED_PRODUCT_COLUMNS = [
     "MK100 青島みかん100%生絞りジュース",
     "STつぶつぶあまおういちごミルク",
     "SHI100不知火100%生絞りジュース",
-    "STY    つぶつぶあまおういちごミルクヨーグルト",
+    "STY あまおういちごヨーグルト",
 ]
 
 FIXED_PRODUCT_COLUMNS = [normalize_product_name(x) for x in FIXED_PRODUCT_COLUMNS]
