@@ -961,7 +961,22 @@ if selected_dates:
                 temp_max = st.number_input("最高気温", key=f"max_{date}", value=20)
                 temp_min = st.number_input("最低気温", key=f"min_{date}", value=20)
             event = st.checkbox("イベント有無", key=f"event_{date}")
-            date_inputs.append({"date": date, "weather": weather, "temp_max": temp_max, "temp_min": temp_min, "event": int(event)})
+            manual_sales = st.number_input(
+                "予想売上（手入力・0なら自動予測を使用）",
+                key=f"manual_sales_{date}",
+                min_value=0,
+                value=0,
+                step=1000
+            )
+
+            date_inputs.append({
+                "date": date,
+                "weather": weather,
+                "temp_max": temp_max,
+                "temp_min": temp_min,
+                "event": int(event),
+                "manual_sales": manual_sales
+            })
 
     st.write("### シーズンメニュー選択")
     with st.expander("シーズンメニューを選ぶ"):
@@ -983,13 +998,19 @@ if st.button("予測を実行"):
         feat = make_features(entry)
 
         # 売上予測（※ multiplier はご提示どおり 1.0 のまま）
-        X_sales = feat[sales_feature_cols] if sales_feature_cols else feat.drop(columns=["売上", "繁忙期フラグ"])
-        raw_sales = sales_model.predict(X_sales)[0]
-        multiplier = 1.0 if feat.at[0, "繁忙期フラグ"] == 1 else 1.0
-        pred_sales = int(raw_sales * multiplier)
+        manual_sales = int(entry.get("manual_sales", 0) or 0)
+
+        if manual_sales > 0:
+            pred_sales = manual_sales
+        else:
+            X_sales = feat[sales_feature_cols] if sales_feature_cols else feat.drop(columns=["売上", "繁忙期フラグ"])
+            raw_sales = sales_model.predict(X_sales)[0]
+            multiplier = 1.0 if feat.at[0, "繁忙期フラグ"] == 1 else 1.0
+            pred_sales = int(raw_sales * multiplier)
+
+        feat["売上"] = pred_sales
 
         # 商品数量予測
-        feat["売上"] = pred_sales
         qty_dict = {}
         for item in (constant_items + selected_season):
             item = normalize_product_name(item)
